@@ -253,3 +253,33 @@ def my_explained_variance(qpred, q):
     _, varpred = tf.nn.moments(q - qpred, axes=[0, 1])
     check_shape([vary, varpred], [[]] * 2)
     return 1.0 - (varpred / vary)
+
+def jacobian(y, x):
+    n = tf.shape(y)[0]
+    loop_vars = [
+        tf.constant(0, tf.int32),
+        tf.TensorArray(tf.float32, size=n),
+    ]
+    _, jacobian = tf.while_loop(
+        lambda j, _: j < n,
+        lambda j, result: (j+1, result.write(j, tf.gradients(y[j], x))),
+        loop_vars)
+    J = jacobian.stack()
+    js = list(range(len(J.get_shape().as_list())))
+    js[0] = 1
+    js[1] = 0
+    jac = tf.transpose(J, js)[0]
+    return jac
+
+if __name__ == "__main__":
+    x = tf.placeholder(tf.float32, [None, 3])
+    n = tf.placeholder(tf.int32, [])
+    w = tf.constant([[1., 2., 3.]], dtype=tf.float32)
+    w2 = tf.constant([2.0, 19], dtype=tf.float32)
+    y = tf.reduce_sum(x * w, axis=1)
+    z = y*2 * w2
+    sess = tf.Session()
+    j = tf.squeeze(jacobian(z, w2))#, n))
+    _x = [[3, 2, 1], [1, 2, 3]]
+    _j = sess.run(j, feed_dict={x: _x, n:len(_x)})
+    print(_j, _j.shape)
