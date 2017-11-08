@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 from baselines.a2c.utils import conv, fc, conv_to_fc, batch_to_seq, seq_to_batch, lstm, lnlstm, sample, check_shape
+from baselines.acktr.utils import dense, kl_div
 from baselines.common.distributions import make_pdtype
 import baselines.common.tf_util as U
 import gym
@@ -239,3 +240,135 @@ class RelaxedLinearPolicy(object):
         self.a0 = a0
         self.U1 = U1
         self.U2 = U2
+        
+     
+def pathlength(path):
+    return path["reward"].shape[0]
+      
+      
+class GaussianMlpPolicy(object):
+    def __init__(self, sess, ob_dim, ac_dim, vf_lr=0.001, cv_lr=0.001, reuse=False):
+        # Here we'll construct a bunch of expressions, which will be used in two places:
+        # (1) When sampling actions
+        # (2) When computing loss functions, for the policy update
+        # Variables specific to (1) have the word "sampled" in them,
+        # whereas variables specific to (2) have the word "old" in them
+        self.relaxed = False
+        self.X = tf.placeholder(tf.float32, shape=[None, ob_dim*2+ac_dim*2+2]) # batch of observations
+        self.ob_no = tf.placeholder(tf.float32, shape=[None, ob_dim*2], name="ob") # batch of observations
+        self.oldac_na = tf.placeholder(tf.float32, shape=[None, ac_dim], name="ac") # batch of actions previous actions
+        oldac_dist = tf.placeholder(tf.float32, shape=[None, ac_dim*2], name="oldac_dist") # batch of actions previous action distributions
+        
+        with tf.variable_scope("model", reuse=reuse):
+            h1 = tf.nn.tanh(dense(self.ob_no, 64, "pi_h1", weight_init=U.normc_initializer(1.0), bias_init=0.0))
+            h2 = tf.nn.tanh(dense(h1, 64, "pi_h2", weight_init=U.normc_initializer(1.0), bias_init=0.0))
+            mean_na = dense(h2, ac_dim, "pi", weight_init=U.normc_initializer(0.1), bias_init=0.0) # Mean control output
+            self.logstd_1a = logstd_1a = tf.get_variable("logstd", [ac_dim], tf.float32, tf.zeros_initializer()) # Variance on outputs
+            logstd_1a = tf.expand_dims(logstd_1a, 0)
+            self.std_1a = tf.exp(logstd_1a)
+            self.std_na = tf.tile(self.std_1a, [tf.shape(mean_na)[0], 1])
+            ac_dist = tf.concat([tf.reshape(mean_na, [-1, ac_dim]), tf.reshape(self.std_na, [-1, ac_dim])], 1)
+            sampled_ac_na = tf.random_normal(tf.shape(ac_dist[:,ac_dim:])) * ac_dist[:,ac_dim:] + ac_dist[:,:ac_dim] # This is the sampled action we'll perform.
+            logprobsampled_n = - U.sum(tf.log(ac_dist[:,ac_dim:]), axis=1) - 0.5 * tf.log(2.0*np.pi)*ac_dim - 0.5 * U.sum(tf.square(ac_dist[:,:ac_dim] - sampled_ac_na) / (tf.square(ac_dist[:,ac_dim:])), axis=1) # Logprob of sampled action
+            self.logprob_n = - U.sum(tf.log(ac_dist[:,ac_dim:]), axis=1) - 0.5 * tf.log(2.0*np.pi)*ac_dim - 0.5 * U.sum(tf.square(ac_dist[:,:ac_dim] - self.oldac_na) / (tf.square(ac_dist[:,ac_dim:])), axis=1) # Logprob of previous actions under CURRENT policy (whereas oldlogprob_n is under OLD policy)
+            kl = U.mean(kl_div(oldac_dist, ac_dist, ac_dim))
+        
+
+            vh1 = tf.nn.elu(dense(self.X, 64, "vf_h1", weight_init=U.normc_initializer(1.0), bias_init=0))
+            vh2 = tf.nn.elu(dense(vh1, 64, "vf_h2", weight_init=U.normc_initializer(1.0), bias_init=0))
+            vpred_n = dense(vh2, 1, "vf", weight_init=None, bias_init=0)
+            v0 = vpred_n[:, 0]
+            self.vf_optim = tf.train.AdamOptimizer(0.03)
+        
+        def act(ob):
+            ac, dist, logp = sess.run([sampled_ac_na, ac_dist, logprobsampled_n], {self.ob_no: ob[None]})  # Generate a new action and its logprob
+            return ac[0], dist[0], logp[0]
+        def value(obs, x):
+            return sess.run(v0, {self.X: x, self.ob_no:obs})
+        def preproc(path):
+            l = pathlength(path)
+            al = np.arange(l).reshape(-1,1)/10.0
+            act = path["action_dist"].astype('float32')
+            X = np.concatenate([path['observation'], act, al, np.ones((l, 1))], axis=1)
+            return X
+        def predict(obs, path):
+            return value(obs, preproc(path))
+        def compute_kl(ob, dist):
+            return sess.run(kl, {self.ob_no: ob, oldac_dist: dist})
+            
+        self.mean = mean_na
+        self.vf = v0
+        self.act = act
+        self.value = value
+        self.preproc = preproc
+        self.predict = predict
+        self.compute_kl = compute_kl
+        self.a0 = sampled_ac_na
+        
+
+class RelaxedGaussianMlpPolicy(object):
+    def __init__(self, sess, ob_dim, ac_dim, vf_lr=0.001, cv_lr=0.001, reuse=False):
+        # Here we'll construct a bunch of expressions, which will be used in two places:
+        # (1) When sampling actions
+        # (2) When computing loss functions, for the policy update
+        # Variables specific to (1) have the word "sampled" in them,
+        # whereas variables specific to (2) have the word "old" in them
+        self.relaxed = True
+        self.X = tf.placeholder(tf.float32, shape=[None, ob_dim*2+ac_dim*2+2]) # batch of observations
+        self.ob_no = tf.placeholder(tf.float32, shape=[None, ob_dim*2], name="ob") # batch of observations
+        self.oldac_na = tf.placeholder(tf.float32, shape=[None, ac_dim], name="ac") # batch of actions previous actions
+        oldac_dist = tf.placeholder(tf.float32, shape=[None, ac_dim*2], name="oldac_dist") # batch of actions previous action distributions
+        
+        with tf.variable_scope("model", reuse=reuse):
+            h1 = tf.nn.tanh(dense(self.ob_no, 64, "pi_h1", weight_init=U.normc_initializer(1.0), bias_init=0.0))
+            h2 = tf.nn.tanh(dense(h1, 64, "pi_h2", weight_init=U.normc_initializer(1.0), bias_init=0.0))
+            mean_na = dense(h2, ac_dim, "pi", weight_init=U.normc_initializer(0.1), bias_init=0.0) # Mean control output
+            self.logstd_1a = logstd_1a = tf.get_variable("logstd", [ac_dim], tf.float32, tf.zeros_initializer()) # Variance on outputs
+            logstd_1a = tf.expand_dims(logstd_1a, 0)
+            self.std_1a = tf.exp(logstd_1a)
+            self.std_na = tf.tile(self.std_1a, [tf.shape(mean_na)[0], 1])
+            ac_dist = tf.concat([tf.reshape(mean_na, [-1, ac_dim]), tf.reshape(self.std_na, [-1, ac_dim])], 1)
+            sampled_ac_na = tf.random_normal(tf.shape(ac_dist[:,ac_dim:])) * ac_dist[:,ac_dim:] + ac_dist[:,:ac_dim] # This is the sampled action we'll perform.
+            logprobsampled_n = - U.sum(tf.log(ac_dist[:,ac_dim:]), axis=1) - 0.5 * tf.log(2.0*np.pi)*ac_dim - 0.5 * U.sum(tf.square(ac_dist[:,:ac_dim] - sampled_ac_na) / (tf.square(ac_dist[:,ac_dim:])), axis=1) # Logprob of sampled action
+            self.logprob_n = - U.sum(tf.log(ac_dist[:,ac_dim:]), axis=1) - 0.5 * tf.log(2.0*np.pi)*ac_dim - 0.5 * U.sum(tf.square(ac_dist[:,:ac_dim] - self.oldac_na) / (tf.square(ac_dist[:,ac_dim:])), axis=1) # Logprob of previous actions under CURRENT policy (whereas oldlogprob_n is under OLD policy)
+            kl = U.mean(kl_div(oldac_dist, ac_dist, ac_dim))
+        
+            vf1 = tf.nn.elu(dense(self.X, 64, 'vf_fc1', weight_init=U.normc_initializer(1.0), bias_init=0))
+            vf2 = tf.nn.elu(dense(vf1, 64, 'vf_fc2', weight_init=U.normc_initializer(1.0), bias_init=0))
+            vf = dense(vf2, 1, "vf", weight_init=None, bias_init=0)
+
+            s = tf.get_variable("cv_scale", [], tf.float32, tf.constant_initializer(1.0))  
+            cv1 = tf.nn.elu(dense(tf.concat([self.X, sampled_ac_na],1), 64, 'cv_fc1', weight_init=U.normc_initializer(1.0), bias_init=0))
+            cv2 = tf.nn.elu(dense(cv1, 64, 'cv_fc2', weight_init=U.normc_initializer(1.0), bias_init=0))
+            cv = s * dense(cv2, 1, "cv", weight_init=None, bias_init=0)
+
+        v0 = vf[:, 0]
+        self.vf_optim = tf.train.AdamOptimizer(vf_lr)
+        self.cv_optim = tf.train.AdamOptimizer(cv_lr)    
+        
+        def act(ob):
+            ac, dist, logp = sess.run([sampled_ac_na, ac_dist, logprobsampled_n], {self.ob_no: ob[None]})  # Generate a new action and its logprob
+            return ac[0], dist[0], logp[0]
+        def value(obs, x):
+            return sess.run(v0, {self.X:x, self.ob_no:obs})
+        def preproc(path):
+            l = pathlength(path)
+            al = np.arange(l).reshape(-1,1)/10.0
+            act = path["action_dist"].astype('float32')
+            X = np.concatenate([path['observation'], act, al, np.ones((l, 1))], axis=1)
+            return X
+        def predict(obs, path):
+            return value(obs, preproc(path))
+        def compute_kl(ob, dist):
+            return sess.run(kl, {self.ob_no: ob, oldac_dist: dist})
+            
+        
+        self.mean = mean_na
+        self.vf = vf
+        self.cv = cv
+        self.act = act
+        self.value = value
+        self.preproc = preproc
+        self.predict = predict
+        self.compute_kl = compute_kl
+        self.a0 = sampled_ac_na
