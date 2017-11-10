@@ -139,9 +139,9 @@ def make_samples(logits, u, u2, log_temp, eps=1e-8):
     y = -1. * tf.log(u2) + tf.exp(-1. * B)
     g3 = -1. * tf.log(y)
     scores3 = g3 + logprobs
+    # slightly biased…
     logprobs_zt = hard_samples_oh * scores2 + ((-1. * hard_samples_oh) + 1.) * scores3
     return hard_samples, tf.nn.softmax(logprobs_z / temp), tf.nn.softmax(logprobs_zt / temp)
-    #return hard_samples, logprobs_z, logprobs_zt
 
 
 class LinearPolicy(object):
