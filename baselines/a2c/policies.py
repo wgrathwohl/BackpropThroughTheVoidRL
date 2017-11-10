@@ -278,7 +278,7 @@ class GaussianMlpPolicy(object):
             vh2 = tf.nn.elu(dense(vh1, 64, "vf_h2", weight_init=U.normc_initializer(1.0), bias_init=0))
             vpred_n = dense(vh2, 1, "vf", weight_init=None, bias_init=0)
             v0 = vpred_n[:, 0]
-            self.vf_optim = tf.train.AdamOptimizer(0.03)
+            self.vf_optim = tf.train.AdamOptimizer(vf_lr)
         
         def act(ob):
             ac, dist, logp = sess.run([sampled_ac_na, ac_dist, logprobsampled_n], {self.ob_no: ob[None]})  # Generate a new action and its logprob

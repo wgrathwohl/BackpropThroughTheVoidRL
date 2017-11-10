@@ -108,6 +108,9 @@ class Model(object):
                 train_model.ob_no:obs, train_model.oldac_na:old_actions, train_model.X:vf_in,
                 A: old_actions, ADV:advs, R:rewards, BS_R: bs_rewards
             }
+            for _ in range(25): sess.run(_vf_train, 
+                          {train_model.ob_no:obs, train_model.oldac_na:old_actions, train_model.X:vf_in, 
+                           A: old_actions, ADV:advs, R:rewards, BS_R:bs_rewards})
             if summary:
                 sum_str, policy_loss, value_loss, _, = sess.run(
                     [sum_op, pg_loss, vf_loss, _train],
@@ -119,9 +122,6 @@ class Model(object):
                     [pg_loss, vf_loss, _train],
                     td_map
                 )
-            for _ in range(25): sess.run(_vf_train, 
-                          {train_model.ob_no:obs, train_model.oldac_na:old_actions, train_model.X:vf_in, 
-                           A: old_actions, ADV:advs, R:rewards, BS_R:bs_rewards})
             self._step += 1
             return policy_loss, value_loss
           
