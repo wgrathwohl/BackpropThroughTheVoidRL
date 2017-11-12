@@ -68,7 +68,7 @@ class Model(object):
 
             pi_param_grads = tf.gradients(train_model.pi, policy_params, grad_ys=pi_grads)
 
-            cv_grads = tf.concat([tf.reshape(p, [-1]) for p in pi_param_grads], 0)
+            cv_grads = tf.concat([tf.reshape(p, [-1]) for p in pg_grads], 0)
             cv_grad_splits = tf.reduce_sum(tf.square(cv_grads))
             vf_loss = cv_grad_splits * vf_coef
 
