@@ -27,7 +27,6 @@ class Model(object):
         A = tf.placeholder(tf.float32, [None, ac_dim], name="A")
         ADV = tf.placeholder(tf.float32, [None], name="ADV")
         R = tf.placeholder(tf.float32, [None], name="R")
-        BS_R = tf.placeholder(tf.float32, [None], name="BS_R") # bootstrapped reward
     
         train_model = policy(sess, ob_dim, ac_dim, vf_lr, cv_lr, reuse=False)
         step_model = policy(sess, ob_dim, ac_dim, vf_lr, cv_lr, reuse=True)
@@ -45,16 +44,20 @@ class Model(object):
 
         if train_model.relaxed:
             ddiff_loss = tf.reduce_mean(train_model.cv)            
-            ddiff_grads_mean = tf.gradients(ddiff_loss, train_model.mean)[0]
-            ddiff_grads_std = tf.gradients(ddiff_loss, train_model.std_na)[0]
+            ddiff_grads_mean = tf.gradients(ddiff_loss, pi_params)
+            ddiff_grads_std = tf.gradients(ddiff_loss, train_model.logstd_1a)
             
             dlogp_dmean = (A - train_model.mean)/ tf.square(train_model.std_na)
-            dlogp_dstd = -1/train_model.std_na + 1/tf.pow(train_model.std_na,3)*tf.square(A-train_model.mean)            
+            dlogp_dstd = -1/train_model.std_na + 1/tf.pow(train_model.std_na,3)*tf.square(A-train_model.mean)          
             
-            pi_grads_mean = -((tf.expand_dims(BS_R, 1) - train_model.vf - train_model.cv) * dlogp_dmean) - ddiff_grads_mean
-            pi_grads_std = -((tf.expand_dims(BS_R, 1) - train_model.vf - train_model.cv) * dlogp_dstd) - ddiff_grads_std
+            pi_grads_mean = -((tf.expand_dims(ADV,1) - train_model.cv) * dlogp_dmean)/ tf.to_float(tf.shape(ADV)[0])
+            pg_grads_mean = tf.gradients(train_model.mean, pi_params, grad_ys=pi_grads_mean)
+            pg_grads_mean = [pg - dg for pg, dg in zip(pg_grads_mean, ddiff_grads_mean)]
+            pi_grads_std = -((tf.expand_dims(ADV,1) - train_model.cv) * dlogp_dstd)/ tf.to_float(tf.shape(ADV)[0])
+            pg_grads_std = tf.gradients(train_model.std_na, train_model.logstd_1a, grad_ys=pi_grads_std)
+            pg_grads_std = [pg - dg for pg, dg in zip(pg_grads_std, ddiff_grads_std)]
             
-            pg_grads = tf.gradients(train_model.mean, pi_params, grad_ys=pi_grads_mean) + tf.gradients(train_model.std_na, train_model.logstd_1a, grad_ys=pi_grads_std)
+            pg_grads = pg_grads_mean + pg_grads_std
             
             cv_loss= tf.concat([tf.reshape(p, [-1]) for p in pg_grads], 0)
             cv_loss = tf.squeeze(tf.reduce_sum(tf.square(cv_loss)))       
@@ -89,11 +92,11 @@ class Model(object):
         
         self._step = 0
         
-        def get_cv_grads(obs, old_actions, advs, rewards, bs_rewards, vf_in, values):
+        def get_cv_grads(obs, old_actions, advs, rewards, vf_in, values):
             advs = rewards - values
             td_map = {
                 train_model.ob_no:obs, train_model.oldac_na:old_actions, train_model.X:vf_in,
-                A: old_actions, ADV:advs, BS_R: bs_rewards
+                A: old_actions, ADV:advs, R: rewards
             }
             cv_gs = sess.run(cv_grads, td_map)
             return cv_gs
@@ -102,15 +105,15 @@ class Model(object):
             cv_gvs = list(zip(mean_cv_gs, cv_params))
             train_model.cv_optim.apply_gradients(cv_gvs)
             
-        def update_policy_and_value(obs, old_actions, advs, rewards, bs_rewards, vf_in, values, summary=False):
+        def update_policy_and_value(obs, old_actions, advs, rewards, vf_in, values, summary=False):
             advs = rewards - values
             td_map = {
                 train_model.ob_no:obs, train_model.oldac_na:old_actions, train_model.X:vf_in,
-                A: old_actions, ADV:advs, R:rewards, BS_R: bs_rewards
+                A: old_actions, ADV:advs, R:rewards
             }
             for _ in range(25): sess.run(_vf_train, 
                           {train_model.ob_no:obs, train_model.oldac_na:old_actions, train_model.X:vf_in, 
-                           A: old_actions, ADV:advs, R:rewards, BS_R:bs_rewards})
+                           A: old_actions, ADV:advs, R:rewards})
             if summary:
                 sum_str, policy_loss, value_loss, _, = sess.run(
                     [sum_op, pg_loss, vf_loss, _train],
@@ -125,10 +128,10 @@ class Model(object):
             self._step += 1
             return policy_loss, value_loss
           
-        def get_grads(obs, old_actions, advs, rewards, bs_rewards, vf_in, value):
+        def get_grads(obs, old_actions, advs, rewards, vf_in, value):
             td_map = {
                 train_model.ob_no:obs, train_model.oldac_na:old_actions, train_model.X:vf_in,
-                A: old_actions, ADV:advs, R:rewards, BS_R:bs_rewards
+                A: old_actions, ADV:advs, R:rewards
             }
             _g = all_policy_grads / tf.to_float(tf.shape(rewards)[0])
             pg = sess.run(
@@ -226,11 +229,10 @@ class RolloutRunner(object):
                 "action_dist": np.array(ac_dists), "logp" : np.array(logps)}
         
         rew_t = path["reward"]
-        vtarg = common.discount(rew_t, self.gamma)
         value = self.policy.predict(path["observation"], path)
+        vtarg = common.discount(np.append(rew_t, 0.0 if path["terminated"] else value[-1]), self.gamma)[:-1]
         vpred_t = np.append(value, 0.0 if path["terminated"] else value[-1])
         delta_t = rew_t + self.gamma*vpred_t[1:] - vpred_t[:-1]
-        bs_reward_t = common.discount(rew_t + self.gamma*vpred_t[1:], self.gamma) #bootstrapped reward
         adv_GAE = common.discount(delta_t, self.gamma * self.lam)
         
         if np.mean(self.rewards) >= self.score and not self.finished:
@@ -238,7 +240,7 @@ class RolloutRunner(object):
             self.frames_till_done = self._num_steps
             self.finished = True      
         
-        return path, vtarg, value, adv_GAE, bs_reward_t
+        return path, vtarg, value, adv_GAE
 
 
 def learn(env, policy, seed, total_timesteps=int(10e6),
@@ -278,12 +280,12 @@ def learn(env, policy, seed, total_timesteps=int(10e6),
             pgs = []
             if i %10 == 0:
                 for _ in range(10):
-                    path, vtarg, value, adv, bs_r = runner.run(update_counters=False)
+                    path, vtarg, value, adv = runner.run(update_counters=False)
                     
                     std_adv = (adv - adv.mean()) / (adv.std() + 1e-8)
                     vf_in = model.step_model.preproc(path)
                     
-                    pg = model.get_grads(path["observation"], path["action"], std_adv, vtarg, bs_r, vf_in, value)
+                    pg = model.get_grads(path["observation"], path["action"], std_adv, vtarg, vf_in, value)
                     pgs.append(pg)
                 pgs = np.array(pg)
                 pgv = np.var(pgs, axis=0)
@@ -298,24 +300,22 @@ def learn(env, policy, seed, total_timesteps=int(10e6),
         advs = []
         std_advs = []
         vf_ins=[]
-        bs_rewards = []
         values = []
         cv_grads = []
         while True:
             runner.animate = (len(paths)==0 and (i % 10 == 0) and animate)
-            path, vtarg, value, adv, bs_r = runner.run()
+            path, vtarg, value, adv = runner.run()
             
             if model.train_model.relaxed:
                 std_adv = (adv - adv.mean()) / (adv.std() + 1e-8)
                 vf_in = model.step_model.preproc(path)
-                cv_grad = model.get_cv_grads(path["observation"], path["action"], std_adv, vtarg, bs_r, vf_in, value)
+                cv_grad = model.get_cv_grads(path["observation"], path["action"], std_adv, vtarg, vf_in, value)
                 cv_grads.append(cv_grad)
                 std_advs.append(std_adv)
                 vf_ins.append(vf_in)
             vtargs.append(vtarg)
             values.append(value)
             advs.append(adv)            
-            bs_rewards.append(bs_r)
             
             paths.append(path)
             n = pathlength(path)
@@ -332,14 +332,13 @@ def learn(env, policy, seed, total_timesteps=int(10e6),
         standardized_adv_n = (adv_n - adv_n.mean()) / (adv_n.std() + 1e-8)
         rewards_n = np.concatenate(vtargs)
         values_n = np.concatenate(values)
-        bs_rewards_n = np.concatenate(bs_rewards) 
         
         # for value function 
         x = np.concatenate([model.step_model.preproc(p) for p in paths])
         logger.record_tabular("EVBefore", common.explained_variance(model.step_model.value(ob_no, x), rewards_n))
             
         # update policy and value network
-        policy_loss, value_loss = model.update_policy_and_value(ob_no, action_na, standardized_adv_n, rewards_n, bs_rewards_n, x, values_n)
+        policy_loss, value_loss = model.update_policy_and_value(ob_no, action_na, standardized_adv_n, rewards_n, x, values_n)
         
         if model.train_model.relaxed:
             # update control variate cv_num times
@@ -357,7 +356,7 @@ def learn(env, policy, seed, total_timesteps=int(10e6),
                 # get updated cv_grads
                 cv_grads=[]
                 for p in range(len(paths)):
-                    cv_grads.append(model.get_cv_grads(paths[p]["observation"], paths[p]["action"], std_advs[p], vtargs[p], bs_rewards[p], vf_ins[p], values[p]))            
+                    cv_grads.append(model.get_cv_grads(paths[p]["observation"], paths[p]["action"], std_advs[p], vtargs[p], vf_ins[p], values[p]))            
         
         logger.record_tabular("EVAfter", common.explained_variance(model.step_model.value(ob_no, x), rewards_n))
 

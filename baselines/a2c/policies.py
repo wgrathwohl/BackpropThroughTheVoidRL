@@ -337,10 +337,10 @@ class RelaxedGaussianMlpPolicy(object):
             vf2 = tf.nn.elu(dense(vf1, 64, 'vf_fc2', weight_init=U.normc_initializer(1.0), bias_init=0))
             vf = dense(vf2, 1, "vf", weight_init=None, bias_init=0)
 
-            s = tf.get_variable("cv_scale", [], tf.float32, tf.constant_initializer(1.0))  
+            #s = tf.get_variable("cv_scale", [], tf.float32, tf.constant_initializer(1.0))  
             cv1 = tf.nn.elu(dense(tf.concat([self.X, sampled_ac_na],1), 64, 'cv_fc1', weight_init=U.normc_initializer(1.0), bias_init=0))
             cv2 = tf.nn.elu(dense(cv1, 64, 'cv_fc2', weight_init=U.normc_initializer(1.0), bias_init=0))
-            cv = s * dense(cv2, 1, "cv", weight_init=None, bias_init=0)
+            cv = dense(cv2, 1, "cv", weight_init=None, bias_init=0)
 
         v0 = vf[:, 0]
         self.vf_optim = tf.train.AdamOptimizer(vf_lr)

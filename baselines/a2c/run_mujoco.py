@@ -23,7 +23,7 @@ def train(env_id, num_timesteps, seed, logdir, relax, p_lr, vf_lr, cv_lr, cv_num
     else:
         policy = GaussianMlpPolicy
     if endwhendone:
-        num_timesteps = 1000000000
+        num_timesteps = 10e9
     learn(env, policy=policy, seed=seed, p_lr=p_lr, vf_lr=vf_lr, cv_lr=cv_lr, cv_num=cv_num,
         gamma=0.99, lam=0.97, timesteps_per_batch=2500,
         desired_kl=0.002, logdir=logdir,
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
     parser.add_argument('--env', help='environment ID', type=str, default="InvertedPendulum-v1")
     parser.add_argument('--relax', help='relax or a2c', type=str, default="False")
-    parser.add_argument('--numt', help='num timesteps', type=int, default=1000000)
+    parser.add_argument('--numt', help='num timesteps', type=int, default=10e6)
     parser.add_argument('--checklogdir', help='whether to check if logdir exists', type=str, default='False')
     parser.add_argument('--p_lr', help='policy learning rate', type=float, default=0.0001)
     parser.add_argument('--vf_lr', help='value-function learning rate', type=float, default=0.001)
