@@ -255,6 +255,7 @@ class GaussianMlpPolicy(object):
         # whereas variables specific to (2) have the word "old" in them
         self.relaxed = False
         self.X = tf.placeholder(tf.float32, shape=[None, ob_dim*2+ac_dim*2+2]) # batch of observations
+        self.U1 = tf.placeholder(tf.float32, shape=[None, ac_dim], name="U1")
         self.ob_no = tf.placeholder(tf.float32, shape=[None, ob_dim*2], name="ob") # batch of observations
         self.oldac_na = tf.placeholder(tf.float32, shape=[None, ac_dim], name="ac") # batch of actions previous actions
         oldac_dist = tf.placeholder(tf.float32, shape=[None, ac_dim*2], name="oldac_dist") # batch of actions previous action distributions
@@ -268,6 +269,7 @@ class GaussianMlpPolicy(object):
             self.std_1a = tf.exp(logstd_1a)
             self.std_na = tf.tile(self.std_1a, [tf.shape(mean_na)[0], 1])
             ac_dist = tf.concat([tf.reshape(mean_na, [-1, ac_dim]), tf.reshape(self.std_na, [-1, ac_dim])], 1)
+            sampled_ac_na = self.U1 * ac_dist[:,ac_dim:] + ac_dist[:,:ac_dim]
             sampled_ac_na = tf.random_normal(tf.shape(ac_dist[:,ac_dim:])) * ac_dist[:,ac_dim:] + ac_dist[:,:ac_dim] # This is the sampled action we'll perform.
             logprobsampled_n = - U.sum(tf.log(ac_dist[:,ac_dim:]), axis=1) - 0.5 * tf.log(2.0*np.pi)*ac_dim - 0.5 * U.sum(tf.square(ac_dist[:,:ac_dim] - sampled_ac_na) / (tf.square(ac_dist[:,ac_dim:])), axis=1) # Logprob of sampled action
             self.logprob_n = - U.sum(tf.log(ac_dist[:,ac_dim:]), axis=1) - 0.5 * tf.log(2.0*np.pi)*ac_dim - 0.5 * U.sum(tf.square(ac_dist[:,:ac_dim] - self.oldac_na) / (tf.square(ac_dist[:,ac_dim:])), axis=1) # Logprob of previous actions under CURRENT policy (whereas oldlogprob_n is under OLD policy)
@@ -281,8 +283,9 @@ class GaussianMlpPolicy(object):
             self.vf_optim = tf.train.AdamOptimizer(vf_lr)
         
         def act(ob):
-            ac, dist, logp = sess.run([sampled_ac_na, ac_dist, logprobsampled_n], {self.ob_no: ob[None]})  # Generate a new action and its logprob
-            return ac[0], dist[0], logp[0]
+            u1 = np.random.randn(ac_dim)[None]
+            ac, dist, logp = sess.run([sampled_ac_na, ac_dist, logprobsampled_n], {self.ob_no: ob[None], self.U1:u1})  # Generate a new action and its logprob
+            return ac[0], dist[0], logp[0], u1[0]
         def value(obs, x):
             return sess.run(v0, {self.X: x, self.ob_no:obs})
         def preproc(path):
@@ -315,6 +318,7 @@ class RelaxedGaussianMlpPolicy(object):
         # whereas variables specific to (2) have the word "old" in them
         self.relaxed = True
         self.X = tf.placeholder(tf.float32, shape=[None, ob_dim*2+ac_dim*2+2]) # batch of observations
+        self.U1 = tf.placeholder(tf.float32, shape=[None, ac_dim], name="U1")
         self.ob_no = tf.placeholder(tf.float32, shape=[None, ob_dim*2], name="ob") # batch of observations
         self.oldac_na = tf.placeholder(tf.float32, shape=[None, ac_dim], name="ac") # batch of actions previous actions
         oldac_dist = tf.placeholder(tf.float32, shape=[None, ac_dim*2], name="oldac_dist") # batch of actions previous action distributions
@@ -328,7 +332,8 @@ class RelaxedGaussianMlpPolicy(object):
             self.std_1a = tf.exp(logstd_1a)
             self.std_na = tf.tile(self.std_1a, [tf.shape(mean_na)[0], 1])
             ac_dist = tf.concat([tf.reshape(mean_na, [-1, ac_dim]), tf.reshape(self.std_na, [-1, ac_dim])], 1)
-            sampled_ac_na = tf.random_normal(tf.shape(ac_dist[:,ac_dim:])) * ac_dist[:,ac_dim:] + ac_dist[:,:ac_dim] # This is the sampled action we'll perform.
+            sampled_ac_na = self.U1 * ac_dist[:,ac_dim:] + ac_dist[:,:ac_dim]
+            #sampled_ac_na = tf.random_normal(tf.shape(ac_dist[:,ac_dim:])) * ac_dist[:,ac_dim:] + ac_dist[:,:ac_dim] # This is the sampled action we'll perform.
             logprobsampled_n = - U.sum(tf.log(ac_dist[:,ac_dim:]), axis=1) - 0.5 * tf.log(2.0*np.pi)*ac_dim - 0.5 * U.sum(tf.square(ac_dist[:,:ac_dim] - sampled_ac_na) / (tf.square(ac_dist[:,ac_dim:])), axis=1) # Logprob of sampled action
             self.logprob_n = - U.sum(tf.log(ac_dist[:,ac_dim:]), axis=1) - 0.5 * tf.log(2.0*np.pi)*ac_dim - 0.5 * U.sum(tf.square(ac_dist[:,:ac_dim] - self.oldac_na) / (tf.square(ac_dist[:,ac_dim:])), axis=1) # Logprob of previous actions under CURRENT policy (whereas oldlogprob_n is under OLD policy)
             kl = U.mean(kl_div(oldac_dist, ac_dist, ac_dim))
@@ -347,8 +352,9 @@ class RelaxedGaussianMlpPolicy(object):
         self.cv_optim = tf.train.AdamOptimizer(cv_lr)    
         
         def act(ob):
-            ac, dist, logp = sess.run([sampled_ac_na, ac_dist, logprobsampled_n], {self.ob_no: ob[None]})  # Generate a new action and its logprob
-            return ac[0], dist[0], logp[0]
+            u1 = np.random.randn(ac_dim)[None]
+            ac, dist, logp = sess.run([sampled_ac_na, ac_dist, logprobsampled_n], {self.ob_no: ob[None], self.U1:u1})  # Generate a new action and its logprob
+            return ac[0], dist[0], logp[0], u1[0]
         def value(obs, x):
             return sess.run(v0, {self.X:x, self.ob_no:obs})
         def preproc(path):
@@ -362,7 +368,6 @@ class RelaxedGaussianMlpPolicy(object):
         def compute_kl(ob, dist):
             return sess.run(kl, {self.ob_no: ob, oldac_dist: dist})
             
-        
         self.mean = mean_na
         self.vf = vf
         self.cv = cv
