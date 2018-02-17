@@ -142,10 +142,11 @@ class Model(object):
             self._step += 1
             return policy_loss, value_loss
           
-        def get_grads(obs, old_actions, advs, rewards, bs_rewards, vf_in, value):
+        def get_grads(obs, old_actions, advs, rewards, vf_in, values, u1s):
             td_map = {
                 train_model.ob_no:obs, train_model.oldac_na:old_actions, 
-                train_model.X:vf_in, A: old_actions, ADV:advs, R:rewards
+                train_model.X:vf_in, A: old_actions, ADV:advs, R:rewards,
+                train_model.U1:u1s
             }
             _g = all_policy_grads / tf.to_float(tf.shape(rewards)[0])
             pg = sess.run(
@@ -311,12 +312,13 @@ def learn(env, policy, seed, total_timesteps=int(10e6), l2=True,
             pgs = []
             if i %10 == 0:
                 for _ in range(10):
-                    path, vtarg, value, adv, bs_r = runner.run(update_counters=False)
+                    path, vtarg, value, adv = runner.run(update_counters=False)
                     
                     std_adv = (adv - adv.mean()) / (adv.std() + 1e-8)
                     vf_in = model.step_model.preproc(path)
                     
-                    pg = model.get_grads(path["observation"], path["action"], std_adv, vtarg, bs_r, vf_in, value)
+                    pg = model.get_grads(path["observation"], path["action"], std_adv, 
+                                         vtarg, vf_in, value, path["U1"])
                     pgs.append(pg)
                 pgs = np.array(pg)
                 pgv = np.var(pgs, axis=0)
