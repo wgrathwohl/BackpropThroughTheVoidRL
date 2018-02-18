@@ -24,10 +24,6 @@ def train(env_id, num_timesteps, seed, logdir, relax, p_lr, vf_lr, cv_lr, cv_num
         policy = GaussianMlpPolicy
     if endwhendone:
         num_timesteps = 10e9
-    print("+++++++++++++++++")
-    print(relax)
-    print(l2)
-    print("+++++++++++++++++")
     learn(env, policy=policy, seed=seed, p_lr=p_lr, vf_lr=vf_lr, l2=l2,
           cv_lr=cv_lr, cv_num=cv_num, gamma=0.99, lam=0.97, 
           timesteps_per_batch=2500, desired_kl=0.002, logdir=logdir, 
@@ -56,7 +52,7 @@ if __name__ == "__main__":
     
     if args.checklogdir=="True":
         assert not os.path.exists(args.logdir)    
-    logger.configure(args.logdir, format_strs=["stdout", "log", "tensorboard"])
+    logger.configure(args.logdir, format_strs=["stdout", "log", "tensorboard", "json"])
     train(args.env, num_timesteps=args.numt, seed=args.seed, logdir=args.logdir, 
           relax=(args.relax=="True"), p_lr=args.p_lr, vf_lr=args.vf_lr, cv_lr=args.cv_lr, 
           cv_num=args.cv_num, endwhendone=(args.endwhendone=="True"), score=args.score, 

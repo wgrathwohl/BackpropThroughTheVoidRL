@@ -195,9 +195,10 @@ class RolloutRunner(object):
         self.lam = lam
         self.obfilter = obfilter
         self.animate = animate
+        self._num_episodes
         self._num_rollouts = 0
         self._num_steps = 0
-        self.rewards = []
+        self.rewards = [0]
         self.episodes_till_done = 0
         self.frames_till_done = 0
         self.finished=False
@@ -236,9 +237,13 @@ class RolloutRunner(object):
                 terminated = True
                 break    
         
-        self.rewards.append(sum(rewards))
+        self.rewards[-1] += sum(rewards)
+        if terminated:
+            self.rewards.append(0)
         self.rewards = self.rewards[-100:]
         if update_counters:
+            if terminated:
+                self._num_episodes += 1
             self._num_rollouts += 1
             self._num_steps += len(rewards)
         
@@ -257,7 +262,7 @@ class RolloutRunner(object):
         adv_GAE = common.discount(delta_t, self.gamma * self.lam)[:-1]
         
         if np.mean(self.rewards) >= self.score and not self.finished:
-            self.episodes_till_done = self._num_rollouts
+            self.episodes_till_done = self._num_episodes
             self.frames_till_done = self._num_steps
             self.finished = True   
             
@@ -311,7 +316,7 @@ def learn(env, policy, seed, total_timesteps=int(10e6), l2=True,
         if var_check:
             pgs = []
             if i %10 == 0:
-                for _ in range(10):
+                for _ in range(100):
                     path, vtarg, value, adv = runner.run(update_counters=False)
                     
                     std_adv = (adv - adv.mean()) / (adv.std() + 1e-8)
@@ -415,6 +420,7 @@ def learn(env, policy, seed, total_timesteps=int(10e6), l2=True,
         logger.record_tabular("EpRewMean", np.mean([path["reward"].sum() for path in paths]))
         logger.record_tabular("EpRewSEM", np.std([path["reward"].sum()/np.sqrt(len(paths)) for path in paths]))
         logger.record_tabular("EpLenMean", np.mean([pathlength(path) for path in paths]))
+        logger.record_tabular("l", pathlength(path))
         logger.record_tabular("KL", kl)
         if callback:
             callback()
