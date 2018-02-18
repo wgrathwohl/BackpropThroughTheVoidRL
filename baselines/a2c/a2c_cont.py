@@ -195,7 +195,7 @@ class RolloutRunner(object):
         self.lam = lam
         self.obfilter = obfilter
         self.animate = animate
-        self._num_episodes
+        self._num_episodes = 0
         self._num_rollouts = 0
         self._num_steps = 0
         self.rewards = [0]
