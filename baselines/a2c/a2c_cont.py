@@ -333,6 +333,7 @@ def learn(env, policy, seed, total_timesteps=int(10e6), l2=True,
 
         # Collect paths until we have enough timesteps
         timesteps_this_batch = 0
+        num_episodes = 0
         paths = []
         vtargs = []
         advs = []
@@ -343,6 +344,9 @@ def learn(env, policy, seed, total_timesteps=int(10e6), l2=True,
         while True:
             runner.animate = (len(paths)==0 and (i % 10 == 0) and animate)
             path, vtarg, value, adv = runner.run()
+        
+            if path["terminated"]:
+                num_episodes += 1
             
             if model.train_model.relaxed:
                 std_adv = (adv - adv.mean()) / (adv.std() + 1e-8)
@@ -416,6 +420,7 @@ def learn(env, policy, seed, total_timesteps=int(10e6), l2=True,
         else:
             logger.log("kl just right!")
         
+        logger.record_tabular("mean_r", np.mean(runner.rewards))
         logger.record_tabular("last_r", runner.rewards[-1])
         logger.record_tabular("EpRewMean", np.mean([path["reward"].sum() for path in paths]))
         logger.record_tabular("EpRewSEM", np.std([path["reward"].sum()/np.sqrt(len(paths)) for path in paths]))
