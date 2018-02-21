@@ -236,17 +236,7 @@ class RolloutRunner(object):
             if done:
                 terminated = True
                 break    
-        
-        self.rewards[-1] += sum(rewards)
-        if terminated:
-            self.rewards.append(0)
-        self.rewards = self.rewards[-100:]
-        if update_counters:
-            if terminated:
-                self._num_episodes += 1
-            self._num_rollouts += 1
-            self._num_steps += len(rewards)
-        
+         
         path = {"observation" : np.array(obs), "terminated" : terminated,
                 "reward" : np.array(rewards), "action" : np.array(acs),
                 "action_dist": np.array(ac_dists), "logp" : np.array(logps),
@@ -259,18 +249,28 @@ class RolloutRunner(object):
         
         vpred_t = np.append(value, 0.0 if path["terminated"] else value[-1])
         delta_t = rew_t + self.gamma*vpred_t[1:] - vpred_t[:-1]
-        adv_GAE = common.discount(delta_t, self.gamma * self.lam)[:-1]
-        
-        if np.mean(self.rewards) >= self.score and not self.finished:
-            self.episodes_till_done = self._num_episodes
-            self.frames_till_done = self._num_steps
-            self.finished = True   
+        adv_GAE = common.discount(delta_t, self.gamma * self.lam)[:-1]   
             
         path = {"observation" : np.array(obs)[:-1], "terminated" : terminated,
                 "reward" : np.array(rewards)[:-1], "action" : np.array(acs)[:-1],
                 "action_dist": np.array(ac_dists)[:-1], "logp" : np.array(logps)[:-1],
                 "U1":np.array(us)[:-1]}
+          
+        self.rewards[-1] += np.sum(path["reward"])
+        if terminated:
+            self.rewards.append(0)
+        self.rewards = self.rewards[-100:]
+        if update_counters:
+            if terminated:
+                self._num_episodes += 1
+            self._num_rollouts += 1
+            self._num_steps += pathlength(path)  
         
+        if np.mean(self.rewards) >= self.score and not self.finished:
+            self.episodes_till_done = self._num_episodes
+            self.frames_till_done = self._num_steps
+            self.finished = True
+
         return path, vtarg, value[:-1], adv_GAE
 
 
@@ -304,19 +304,19 @@ def learn(env, policy, seed, total_timesteps=int(10e6), l2=True,
     for var in tf.trainable_variables():
         if "pi" in var.name:
             pi_var_list.append(var)
-
+    
     i = 0
     timesteps_so_far = 0
     while True:
-        if timesteps_so_far > num_timesteps:
+        if timesteps_so_far > num_timesteps or (endwhendone and runner.finished):
             break
         logger.log("********** Iteration %i ************"%i)
         
         # if we want to obtain variance estimates
         if var_check:
             pgs = []
-            if i %10 == 0:
-                for _ in range(100):
+            if i %1 == 0:
+                for _ in range(10):
                     path, vtarg, value, adv = runner.run(update_counters=False)
                     
                     std_adv = (adv - adv.mean()) / (adv.std() + 1e-8)
@@ -333,7 +333,6 @@ def learn(env, policy, seed, total_timesteps=int(10e6), l2=True,
 
         # Collect paths until we have enough timesteps
         timesteps_this_batch = 0
-        num_episodes = 0
         paths = []
         vtargs = []
         advs = []
@@ -341,13 +340,13 @@ def learn(env, policy, seed, total_timesteps=int(10e6), l2=True,
         vf_ins=[]
         values = []
         cv_grads = []
+        episode_num = 0
         while True:
             runner.animate = (len(paths)==0 and (i % 10 == 0) and animate)
             path, vtarg, value, adv = runner.run()
-        
             if path["terminated"]:
-                num_episodes += 1
-            
+                episode_num += 1            
+
             if model.train_model.relaxed:
                 std_adv = (adv - adv.mean()) / (adv.std() + 1e-8)
                 vf_in = model.step_model.preproc(path)
@@ -420,12 +419,12 @@ def learn(env, policy, seed, total_timesteps=int(10e6), l2=True,
         else:
             logger.log("kl just right!")
         
-        logger.record_tabular("mean_r", np.mean(runner.rewards))
+        logger.record_tabular("mean_reward", np.mean(runner.rewards))
         logger.record_tabular("last_r", runner.rewards[-1])
         logger.record_tabular("EpRewMean", np.mean([path["reward"].sum() for path in paths]))
         logger.record_tabular("EpRewSEM", np.std([path["reward"].sum()/np.sqrt(len(paths)) for path in paths]))
         logger.record_tabular("EpLenMean", np.mean([pathlength(path) for path in paths]))
-        logger.record_tabular("l", pathlength(path))
+        logger.record_tabular("l", episode_num)
         logger.record_tabular("KL", kl)
         if callback:
             callback()

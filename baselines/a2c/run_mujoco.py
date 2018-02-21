@@ -24,10 +24,11 @@ def train(env_id, num_timesteps, seed, logdir, relax, p_lr, vf_lr, cv_lr, cv_num
         policy = GaussianMlpPolicy
     if endwhendone:
         num_timesteps = 10e9
-    learn(env, policy=policy, seed=seed, p_lr=p_lr, vf_lr=vf_lr, l2=l2, score=score,
-          cv_lr=cv_lr, cv_num=cv_num, gamma=0.99, lam=0.97, endwhendone=endwhendone,
+    learn(env, policy=policy, seed=seed, p_lr=p_lr, vf_lr=vf_lr, l2=l2,
+          cv_lr=cv_lr, cv_num=cv_num, gamma=0.99, lam=0.97, score=score, 
           timesteps_per_batch=2500, desired_kl=0.002, logdir=logdir, 
-          num_timesteps=num_timesteps, animate=False, var_check=var_check)
+          num_timesteps=num_timesteps, animate=False, var_check=var_check,
+          endwhendone=endwhendone)
 
     env.close()
 
